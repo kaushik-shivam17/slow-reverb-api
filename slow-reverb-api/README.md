@@ -42,7 +42,12 @@ python app.py
 
 ## Deploy (Railway)
 
-Push to GitHub, connect to Railway. The `nixpacks.toml` handles ffmpeg installation and `Procfile` starts gunicorn.
+1. Push repo to GitHub
+2. Create a new Railway project → Deploy from GitHub repo
+3. Go to your service → **Settings → Source → Root Directory** → set it to `slow-reverb-api`
+4. Redeploy
+
+**Step 3 is required.** The repo root contains Node.js files (`package.json`) so Railway will try to build as Node unless you point it at the right folder. Once the root directory is set, `railway.toml` and `nixpacks.toml` take over and install Python + FFmpeg correctly.
 
 ## Notes
 
