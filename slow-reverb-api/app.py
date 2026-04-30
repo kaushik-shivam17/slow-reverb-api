@@ -74,7 +74,7 @@ def process():
     output_filename = f"{slug}_{unique_id}_slow_reverb.mp3"
     output_path = os.path.join(OUTPUT_DIR, output_filename)
 
-    logger.info(f"Processing request — title: '{title}', url: {url}")
+    logger.info(f"job started: '{title}'")
 
     try:
         response = requests.get(url, timeout=30, stream=True)
@@ -82,32 +82,28 @@ def process():
         with open(input_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        logger.info(f"Downloaded audio to {input_path}")
+        logger.info(f"downloaded to {input_path}")
     except requests.exceptions.Timeout:
         return jsonify({"status": "error", "message": "Timeout while downloading audio URL"}), 504
     except requests.exceptions.RequestException as e:
-        logger.error(f"Download failed: {e}")
+        logger.error(f"download failed: {e}")
         return jsonify({"status": "error", "message": f"Failed to download audio: {str(e)}"}), 502
 
     try:
         audio = AudioSegment.from_file(input_path)
-        logger.info(f"Loaded audio — duration: {len(audio)}ms, channels: {audio.channels}, rate: {audio.frame_rate}Hz")
+        logger.info(f"loaded {len(audio)}ms, {audio.channels}ch, {audio.frame_rate}Hz")
     except Exception as e:
-        logger.error(f"Failed to load audio: {e}")
+        logger.error(f"could not load audio: {e}")
         _cleanup(input_path)
         return jsonify({"status": "error", "message": f"Invalid or unsupported audio file: {str(e)}"}), 422
 
     try:
-        logger.info("Applying slow effect (0.85x)...")
         slowed = apply_slow(audio, speed=0.85)
-
-        logger.info("Applying reverb effect...")
         processed = apply_reverb(slowed)
-
         processed.export(output_path, format="mp3", bitrate="192k")
-        logger.info(f"Exported processed audio to {output_path}")
+        logger.info(f"done: {output_path}")
     except Exception as e:
-        logger.error(f"Audio processing failed: {e}")
+        logger.error(f"processing failed: {e}")
         _cleanup(input_path)
         return jsonify({"status": "error", "message": f"Audio processing failed: {str(e)}"}), 500
 
@@ -124,9 +120,8 @@ def _cleanup(path: str):
     try:
         if os.path.exists(path):
             os.remove(path)
-            logger.info(f"Cleaned up temp file: {path}")
     except Exception as e:
-        logger.warning(f"Could not clean up {path}: {e}")
+        logger.warning(f"cleanup failed for {path}: {e}")
 
 
 if __name__ == "__main__":

@@ -1,31 +1,16 @@
-# Slow + Reverb Audio Processing API
+# slow-reverb-api
 
-A production-ready REST API that downloads audio from a URL, applies slow (0.85x) and reverb effects, and returns the path to the processed MP3.
+Flask API that takes an audio URL, applies slow + reverb effects, and returns the processed MP3.
 
-## Stack
-
-- Python 3.10+
-- Flask 3
-- pydub + FFmpeg (audio processing)
-- gunicorn (production server)
-- Railway-ready (nixpacks.toml)
+Built to work with Activepieces automations and deploy on Railway.
 
 ## Endpoints
 
-### `GET /`
-Health check.
+**GET /**
+Health check — returns `{"status": "ok"}`
 
-**Response:**
-```json
-{ "status": "ok", "service": "slow-reverb-api" }
-```
+**POST /process**
 
----
-
-### `POST /process`
-Download and process an audio file.
-
-**Request body:**
 ```json
 {
   "title": "song name",
@@ -33,7 +18,7 @@ Download and process an audio file.
 }
 ```
 
-**Success response (200):**
+Returns:
 ```json
 {
   "status": "success",
@@ -42,58 +27,26 @@ Download and process an audio file.
 }
 ```
 
-**Error responses:**
+Errors return `{"status": "error", "message": "..."}` with the appropriate HTTP status code.
 
-| Status | Reason |
-|--------|--------|
-| 400 | Missing `title` or `url`, or invalid JSON |
-| 422 | Audio file could not be decoded |
-| 502 | Failed to download from the provided URL |
-| 504 | Download timed out |
-| 500 | Internal processing error |
-
----
-
-## Local Development
+## Setup
 
 ```bash
-# Install system dependency
+# needs ffmpeg installed
 brew install ffmpeg        # macOS
-apt install ffmpeg         # Ubuntu/Debian
+apt install ffmpeg         # Debian/Ubuntu
 
-# Install Python deps
 pip install -r requirements.txt
-
-# Run dev server
 python app.py
-
-# Or production server
-gunicorn app:app
 ```
 
-## Deploy on Railway
+## Deploy (Railway)
 
-1. Push this folder to a GitHub repository
-2. Create a new Railway project → Deploy from GitHub repo
-3. Railway will auto-detect `nixpacks.toml` and install FFmpeg
-4. The `Procfile` starts gunicorn automatically
+Push to GitHub, connect to Railway. The `nixpacks.toml` handles ffmpeg installation and `Procfile` starts gunicorn.
 
-## Project Structure
+## Notes
 
-```
-slow-reverb-api/
-├── app.py              # Flask application
-├── requirements.txt    # Python dependencies
-├── Procfile            # Railway/gunicorn start command
-├── nixpacks.toml       # FFmpeg system dependency for Railway
-├── .gitignore
-├── input/              # Temporary download folder (auto-created)
-└── output/             # Processed MP3 output folder (auto-created)
-```
-
-## Audio Processing Details
-
-- **Slow**: Resamples audio to 85% of original speed using pydub's frame-rate trick, then restores original sample rate
-- **Reverb**: Overlays 3 delayed echo layers (-6dB, -12dB, -18dB) at 60ms intervals for a natural reverb tail
-- **Output**: 192kbps MP3
-- **Cleanup**: Temporary input files are deleted after processing
+- Speed is set to 0.85x using pydub's frame rate trick
+- Reverb is 3 echo layers at 60ms intervals, -6/-12/-18 dB
+- Output is 192kbps MP3
+- Input files are deleted after processing
