@@ -1,4 +1,6 @@
 import os
+import gc
+import time
 import uuid
 import logging
 import requests
@@ -15,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 INPUT_DIR = "input"
 OUTPUT_DIR = "output"
+MAX_DOWNLOAD_BYTES = 60 * 1024 * 1024  # 60 MB
+OUTPUT_MAX_AGE_SECONDS = 3600          # delete output files older than 1 hour
 
 os.makedirs(INPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -31,21 +35,33 @@ def apply_slow(audio: AudioSegment, speed: float = 0.85) -> AudioSegment:
     return slowed.set_frame_rate(audio.frame_rate)
 
 
-def apply_reverb(audio: AudioSegment, decay: float = 0.4, delay_ms: int = 60) -> AudioSegment:
-    silence = AudioSegment.silent(duration=delay_ms)
-    padded = audio + silence
+def apply_reverb(audio: AudioSegment, delay_ms: int = 60) -> AudioSegment:
+    tail = AudioSegment.silent(duration=delay_ms * 3)
+    result = audio + tail
 
-    echo1 = silence + audio - 6
-    echo2 = silence + silence + audio - 12
-    echo3 = silence + silence + silence + audio - 18
+    for i, db in enumerate([-6, -12, -18], start=1):
+        offset = delay_ms * i
+        pad_len = max(0, len(result) - len(audio) - offset)
+        echo = AudioSegment.silent(duration=offset) + audio + AudioSegment.silent(duration=pad_len)
+        if len(echo) < len(result):
+            echo = echo + AudioSegment.silent(duration=len(result) - len(echo))
+        result = result.overlay(echo + db)
+        del echo
+        gc.collect()
 
-    max_len = max(len(padded), len(echo1), len(echo2), len(echo3))
-
-    def pad(seg):
-        return seg + AudioSegment.silent(duration=max_len - len(seg))
-
-    result = pad(padded).overlay(pad(echo1)).overlay(pad(echo2)).overlay(pad(echo3))
     return result
+
+
+def cleanup_old_outputs():
+    now = time.time()
+    try:
+        for fname in os.listdir(OUTPUT_DIR):
+            fpath = os.path.join(OUTPUT_DIR, fname)
+            if os.path.isfile(fpath) and (now - os.path.getmtime(fpath)) > OUTPUT_MAX_AGE_SECONDS:
+                os.remove(fpath)
+                logger.info(f"removed old output: {fname}")
+    except Exception as e:
+        logger.warning(f"output cleanup error: {e}")
 
 
 @app.route("/", methods=["GET"])
@@ -55,6 +71,8 @@ def health():
 
 @app.route("/process", methods=["POST"])
 def process():
+    cleanup_old_outputs()
+
     data = request.get_json(silent=True)
 
     if not data:
@@ -79,10 +97,16 @@ def process():
     try:
         response = requests.get(url, timeout=30, stream=True)
         response.raise_for_status()
+        downloaded = 0
         with open(input_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > MAX_DOWNLOAD_BYTES:
+                    f.close()
+                    _cleanup(input_path)
+                    return jsonify({"status": "error", "message": "Audio file too large (60MB limit)"}), 413
                 f.write(chunk)
-        logger.info(f"downloaded to {input_path}")
+        logger.info(f"downloaded {downloaded // 1024}KB to {input_path}")
     except requests.exceptions.Timeout:
         return jsonify({"status": "error", "message": "Timeout while downloading audio URL"}), 504
     except requests.exceptions.RequestException as e:
@@ -97,17 +121,25 @@ def process():
         _cleanup(input_path)
         return jsonify({"status": "error", "message": f"Invalid or unsupported audio file: {str(e)}"}), 422
 
+    _cleanup(input_path)
+
     try:
         slowed = apply_slow(audio, speed=0.85)
+        del audio
+        gc.collect()
+
         processed = apply_reverb(slowed)
+        del slowed
+        gc.collect()
+
         processed.export(output_path, format="mp3", bitrate="192k")
+        del processed
+        gc.collect()
+
         logger.info(f"done: {output_path}")
     except Exception as e:
         logger.error(f"processing failed: {e}")
-        _cleanup(input_path)
         return jsonify({"status": "error", "message": f"Audio processing failed: {str(e)}"}), 500
-
-    _cleanup(input_path)
 
     return jsonify({
         "status": "success",
